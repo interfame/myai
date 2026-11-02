@@ -46,7 +46,7 @@ export async function* streamFromColab(
     body: JSON.stringify({
       messages,
       stream: true,
-      max_tokens: opts?.maxTokens ?? 1024,
+      max_tokens: opts?.maxTokens ?? 2048,
       temperature: opts?.temperature ?? 0.8,
     }),
     signal: AbortSignal.timeout(300000),

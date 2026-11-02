@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Bot, Brain, Menu, Settings } from "lucide-react";
+import { Bot, Brain, Menu, Settings, Volume2, VolumeX } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -14,7 +14,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { ChatInput } from "@/components/myai/chat-input";
+import { ChatInput, type ChatSendPayload } from "@/components/myai/chat-input";
 import { MessageBubble, type UiMessage } from "@/components/myai/message-bubble";
 import { MyAISidebar } from "@/components/myai/sidebar";
 import { SettingsDialog, type SettingsTab } from "@/components/myai/settings-dialog";
@@ -30,7 +30,7 @@ import { cn } from "@/lib/utils";
 
 const SUGGESTIONS = [
   "¿Qué recuerdas de mí?",
-  "Explícame algo sin filtros",
+  "Créame una app: registrador de gastos con base de datos SQLite en el navegador",
   "Voy a enseñarte cómo quiero que me trates",
 ];
 
@@ -89,8 +89,8 @@ export default function Home() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
-  const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [voiceOn, setVoiceOn] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("cerebro");
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -101,6 +101,47 @@ export default function Home() {
   const streamEngineRef = useRef<"colab" | "fallback" | null>(null);
   const stickToBottomRef = useRef(true);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const voiceRef = useRef(false);
+
+  /* ------------------------------ Voz de la IA (TTS) ------------------------------ */
+
+  useEffect(() => {
+    if (window.localStorage.getItem("myai_tts") === "1") {
+      voiceRef.current = true;
+      setVoiceOn(true);
+    }
+  }, []);
+
+  const speak = useCallback((raw: string) => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    const text = raw
+      .replace(/```[\s\S]*?```/g, " Te creé la app, ábrela con el botón de vista previa. ")
+      .replace(/`([^`]+)`/g, "$1")
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/[#*_>|]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 1200);
+    if (!text) return;
+    window.speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = "es-ES";
+    utter.rate = 1.05;
+    const esVoice = window.speechSynthesis.getVoices().find((v) => v.lang.toLowerCase().startsWith("es"));
+    if (esVoice) utter.voice = esVoice;
+    window.speechSynthesis.speak(utter);
+  }, []);
+
+  const toggleVoice = useCallback(() => {
+    setVoiceOn((prev) => {
+      const next = !prev;
+      voiceRef.current = next;
+      window.localStorage.setItem("myai_tts", next ? "1" : "0");
+      if (!next && "speechSynthesis" in window) window.speechSynthesis.cancel();
+      toast.success(next ? "🔊 Voz activada: la IA habla sus respuestas" : "🔇 Voz desactivada");
+      return next;
+    });
+  }, []);
 
   /* ------------------------------ Cargas iniciales ------------------------------ */
 
@@ -234,6 +275,8 @@ export default function Home() {
           break;
         }
         case "done": {
+          // La IA habla su respuesta si la voz está activada
+          if (voiceRef.current && ev.content) speak(ev.content);
           setMessages((prev) => {
             const idx = prev.findIndex((m) => m.pending && m.role === "assistant");
             if (idx === -1) {
@@ -279,17 +322,17 @@ export default function Home() {
         }
       }
     },
-    []
+    [speak]
   );
 
   const sendMessage = useCallback(
-    async (raw: string) => {
-      const text = raw.trim();
-      if (!text || sendingRef.current) return;
+    async (payload: ChatSendPayload) => {
+      const text = payload.text.trim();
+      const attachmentIds = (payload.attachmentIds ?? []).slice(0, 5);
+      if ((!text && attachmentIds.length === 0) || sendingRef.current) return;
 
       sendingRef.current = true;
       setSending(true);
-      setInput("");
       stickToBottomRef.current = true;
 
       const optimisticId = crypto.randomUUID();
@@ -297,8 +340,8 @@ export default function Home() {
         ...prev,
         {
           id: optimisticId,
-          role: "user",
-          content: text,
+          role: "user" as const,
+          content: attachmentIds.length > 0 ? `${text}\n\n📎 ${attachmentIds.length} archivo(s) adjunto(s)` : text,
           createdAt: new Date().toISOString(),
         },
       ]);
@@ -311,7 +354,7 @@ export default function Home() {
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ conversationId: activeId, message: text }),
+          body: JSON.stringify({ conversationId: activeId, message: text, attachmentIds }),
           signal: controller.signal,
         });
         if (!res.ok || !res.body) throw new Error(`El servidor respondió ${res.status}`);
@@ -408,7 +451,6 @@ export default function Home() {
     setSending(false);
     setActiveId(null);
     setMessages([]);
-    setInput("");
     stickToBottomRef.current = true;
   }, []);
 
@@ -516,6 +558,21 @@ export default function Home() {
               variant="ghost"
               size="icon"
               className="size-10"
+              aria-label={voiceOn ? "Desactivar la voz de la IA" : "Activar la voz de la IA"}
+              aria-pressed={voiceOn}
+              title={voiceOn ? "Voz ON: la IA habla sus respuestas" : "Voz OFF: pulsa para que la IA hable"}
+              onClick={toggleVoice}
+            >
+              {voiceOn ? (
+                <Volume2 className="size-5 text-emerald-400" aria-hidden="true" />
+              ) : (
+                <VolumeX className="size-5" aria-hidden="true" />
+              )}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-10"
               aria-label="Abrir ajustes"
               onClick={() => openSettings("cerebro")}
             >
@@ -569,7 +626,7 @@ export default function Home() {
                   ))}
                 </div>
               ) : messages.length === 0 ? (
-                <EmptyState userName={userName} onSuggestion={(s) => void sendMessage(s)} />
+                <EmptyState userName={userName} onSuggestion={(s) => void sendMessage({ text: s, attachmentIds: [] })} />
               ) : (
                 <div className="space-y-4 pb-2">
                   {messages.map((m) => (
@@ -581,10 +638,9 @@ export default function Home() {
           </div>
 
           <ChatInput
-            value={input}
-            onChange={setInput}
-            onSend={() => void sendMessage(input)}
+            onSend={(p) => void sendMessage(p)}
             sending={sending}
+            conversationId={activeId}
             placeholder={`Habla con ${botName}…`}
           />
         </main>

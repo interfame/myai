@@ -31,7 +31,7 @@ function toLearningDTO(l: Learning) {
 }
 
 export async function POST(req: NextRequest) {
-  let body: { conversationId?: string; message?: string };
+  let body: { conversationId?: string; message?: string; attachmentIds?: string[] };
   try {
     body = await req.json();
   } catch {
@@ -55,6 +55,41 @@ export async function POST(req: NextRequest) {
     data: { conversationId: conversation.id, role: "user", content: message },
   });
 
+  // ── Adjuntos: cargar, vincular a la conversación y preparar el bloque de contexto ──
+  const attachmentIds = (body.attachmentIds ?? [])
+    .filter((x): x is string => typeof x === "string" && x.length > 0)
+    .slice(0, 5);
+  const fmtSize = (n: number) =>
+    n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+  let attachmentsBlock = "";
+  if (attachmentIds.length > 0) {
+    const attachments = await db.attachment.findMany({ where: { id: { in: attachmentIds } } });
+    if (attachments.length > 0) {
+      await db.attachment.updateMany({
+        where: { id: { in: attachments.map((a) => a.id) } },
+        data: { conversationId: conversation.id },
+      });
+      // Presupuesto de inyección: el modelo tiene 8k tokens de contexto
+      const BUDGET = 12_000;
+      let used = 0;
+      const parts: string[] = [];
+      for (let i = 0; i < attachments.length; i++) {
+        const a = attachments[i];
+        const remaining = BUDGET - used;
+        if (remaining <= 200) {
+          parts.push(`--- [${i + 1}] ${a.name}: omitido (sin presupuesto de contexto restante) ---`);
+          continue;
+        }
+        const content = a.content.length > remaining ? a.content.slice(0, remaining) + "\n[…texto recortado por espacio…]" : a.content;
+        used += content.length;
+        parts.push(`--- [${i + 1}] ${a.name} (${fmtSize(a.size)}) ---\n${content}`);
+      }
+      attachmentsBlock =
+        `\n\n=== ARCHIVOS ADJUNTOS POR ${settings.userName} ===\n${parts.join("\n\n")}\n=== FIN ARCHIVOS ===\n` +
+        `(Estos archivos son reales y su contenido está arriba: úsalos como contexto verídico para responder.)`;
+    }
+  }
+
   // Memoria aprendida → inyectada en el cerebro (auto-consulta del bucle de retroalimentación)
   const learnings = await db.learning.findMany({
     where: { active: true },
@@ -77,6 +112,11 @@ export async function POST(req: NextRequest) {
       content: m.content,
     })),
   ];
+
+  // Inyecta el contenido de los adjuntos en el último mensaje del usuario (solo para este turno)
+  if (attachmentsBlock && llmMessages[llmMessages.length - 1]?.role === "user") {
+    llmMessages[llmMessages.length - 1].content += attachmentsBlock;
+  }
 
   const brain = await pingBrain(settings.colabUrl);
 

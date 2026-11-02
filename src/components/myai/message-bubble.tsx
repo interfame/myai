@@ -1,10 +1,13 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Bot } from "lucide-react";
+import { Bot, ExternalLink, MonitorPlay } from "lucide-react";
+import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import type { ChatMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { SandboxPreview } from "@/components/myai/sandbox-preview";
 
 /** Mensaje tal como se renderiza en el chat (incluye campos extra de UI). */
 export interface UiMessage extends ChatMessage {
@@ -21,6 +24,13 @@ function formatTime(iso: string): string {
   return d.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
 }
 
+/** Extrae el bloque ```html más grande de un mensaje (la app para el sandbox). */
+function extractHtmlApp(content: string): string | null {
+  const blocks = Array.from(content.matchAll(/```html\s*\n([\s\S]*?)```/g)).map((m) => m[1]);
+  if (blocks.length === 0) return null;
+  return blocks.sort((a, b) => b.length - a.length)[0] ?? null;
+}
+
 function TypingDots() {
   return (
     <span className="flex items-center gap-1 py-1" role="status" aria-label="La IA está escribiendo">
@@ -35,6 +45,33 @@ export function MessageBubble({ message }: { message: UiMessage }) {
   const isUser = message.role === "user";
   const isError = message.error === true;
   const emptyPending = message.pending === true && message.content.length === 0;
+
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [openingTab, setOpeningTab] = useState(false);
+
+  const htmlApp = useMemo(
+    () => (!isUser && !isError && !message.pending ? extractHtmlApp(message.content) : null),
+    [isUser, isError, message.pending, message.content]
+  );
+
+  const openInTab = async () => {
+    if (!htmlApp) return;
+    setOpeningTab(true);
+    try {
+      const res = await fetch("/api/sandboxes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ html: htmlApp }),
+      });
+      const data = (await res.json()) as { sandbox?: { id: string }; error?: string };
+      if (!res.ok || !data.sandbox) throw new Error(data.error ?? `HTTP ${res.status}`);
+      window.open(`/api/sandboxes/${data.sandbox.id}/raw`, "_blank", "noopener");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo abrir la app");
+    } finally {
+      setOpeningTab(false);
+    }
+  };
 
   return (
     <motion.div
@@ -82,6 +119,38 @@ export function MessageBubble({ message }: { message: UiMessage }) {
           )}
         </div>
 
+        {/* Tarjeta del sandbox: la IA creó una app y se puede previsualizar en vivo */}
+        {htmlApp && (
+          <div className="w-full rounded-xl border border-emerald-500/25 bg-zinc-900/70 p-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="grid size-7 shrink-0 place-items-center rounded-lg border border-emerald-500/30 bg-emerald-500/15">
+                <MonitorPlay className="size-3.5 text-emerald-400" aria-hidden="true" />
+              </span>
+              <span className="text-xs font-medium text-emerald-200">
+                App creada · vista previa en vivo disponible
+              </span>
+              <div className="ml-auto flex gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setPreviewOpen(true)}
+                  className="min-h-[32px] rounded-lg bg-emerald-500 px-2.5 text-xs font-medium text-zinc-950 transition-colors hover:bg-emerald-400"
+                >
+                  Ver vista previa
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void openInTab()}
+                  disabled={openingTab}
+                  className="flex min-h-[32px] items-center gap-1 rounded-lg border border-zinc-700 px-2.5 text-xs text-zinc-300 transition-colors hover:border-emerald-500/40 hover:text-emerald-300 disabled:opacity-50"
+                >
+                  <ExternalLink className="size-3" aria-hidden="true" />
+                  Pestaña
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="flex items-center gap-2 px-1">
           {message.engine === "colab" && (
             <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-px font-mono text-[9px] tracking-wider text-emerald-300/90">
@@ -96,6 +165,15 @@ export function MessageBubble({ message }: { message: UiMessage }) {
           <span className="font-mono text-[10px] text-muted-foreground">{formatTime(message.createdAt)}</span>
         </div>
       </div>
+
+      <SandboxPreview
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        html={htmlApp ?? ""}
+        title={`App de ${message.role === "assistant" ? "MyAI" : "MyAI"}`}
+        onOpenInTab={() => void openInTab()}
+        openingTab={openingTab}
+      />
     </motion.div>
   );
 }

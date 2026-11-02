@@ -58,3 +58,26 @@ model Learning {
 
   @@index([active, strength])
 }
+
+// Apps/páginas HTML que la IA crea y se previsualizan en vivo (sandbox)
+model Sandbox {
+  id             String   @id @default(cuid())
+  title          String   @default("App sin título")
+  html           String
+  conversationId String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+// Archivos que el Jefe sube para que la IA los lea y analice
+model Attachment {
+  id             String   @id @default(cuid())
+  name           String
+  mime           String   @default("text/plain")
+  size           Int      @default(0)
+  content        String
+  // true si se recortó el contenido por límite de contexto
+  truncated      Boolean  @default(false)
+  conversationId String?
+  createdAt      DateTime @default(now())
+}
