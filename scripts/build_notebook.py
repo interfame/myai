@@ -16,7 +16,7 @@ md(r"""
 
 **El cerebro libre de tu plataforma MyAI.** Este notebook:
 
-1. ⚡ Carga **Llama-3-8B-Lexi-Uncensored** (GGUF Q4_K_M, ~5GB) en la GPU T4 gratuita
+1. ⚡ Carga **Llama-3-8B-Lexi-Uncensored** (GGUF Q4_K_M, ~5GB, con mirrors de respaldo) en la GPU T4 gratuita
 2. 🌐 Levanta un **servidor API** (FastAPI) con endpoints `/health` y `/chat` (streaming SSE)
 3. 🔗 Abre un **túnel público** con cloudflared (sin cuenta, sin tokens)
 4. 📡 **Se auto-registra** en tu plataforma MyAI → la web se conecta sola al cerebro
@@ -81,16 +81,30 @@ print("✅ Instalación completa")
 code(r"""
 # ═══════════════════════════════════════════════
 # CELDA 4 · Descargar Llama-3-8B-Uncensored (~5 GB, 2-5 min)
-# Versión: Lexi-Uncensored (abliterada, sin rechazos de fábrica)
+# ℹ️  HuggingFace aquí es SOLO el servidor de archivos de donde se baja el
+#     modelo (como descargar un .zip). No necesitas cuenta ni nada: todo el
+#     cerebro corre 100% en Google Colab.
 # ═══════════════════════════════════════════════
 from huggingface_hub import hf_hub_download
 
-MODEL_REPO = "Orengutans/Llama-3-8B-Lexi-Uncensored"
-MODEL_FILE = "Llama-3-8B-Lexi-Uncensored.Q4_K_M.gguf"
+# Cadena de mirrors públicos (se intentan en orden hasta que uno funcione)
+MODELOS = [
+    ("Orenguteng/Llama-3-8B-Lexi-Uncensored-GGUF", "Lexi-Llama-3-8B-Uncensored_Q4_K_M.gguf"),
+    ("bartowski/Llama-3.1-8B-Lexi-Uncensored-V2-GGUF", "Llama-3.1-8B-Lexi-Uncensored-V2-Q4_K_M.gguf"),
+]
 
-print(f"⬇️  Descargando {MODEL_FILE}...")
-MODEL_PATH = hf_hub_download(repo_id=MODEL_REPO, filename=MODEL_FILE)
-print(f"✅ Modelo en: {MODEL_PATH}")
+MODEL_PATH = None
+for repo_id, filename in MODELOS:
+    try:
+        print(f"⬇️  Descargando {filename} desde {repo_id}...")
+        MODEL_PATH = hf_hub_download(repo_id=repo_id, filename=filename)
+        print(f"✅ Modelo descargado en: {MODEL_PATH}")
+        break
+    except Exception as e:
+        print(f"⚠️  Falló {repo_id} ({type(e).__name__}). Probando el siguiente mirror...")
+
+if MODEL_PATH is None:
+    raise RuntimeError("❌ Ningún mirror funcionó. Revisa tu conexión y re-ejecuta esta celda.")
 """)
 
 # ---------- Carga del modelo ----------
