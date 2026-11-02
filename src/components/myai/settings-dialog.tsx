@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Info, Loader2, PlugZap, Save, Settings } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -72,37 +72,64 @@ export function SettingsDialog({
     setTestResult(null);
   }, [open, settings]);
 
-  const testConnection = useCallback(async () => {
-    setTesting(true);
-    setTestResult(null);
-    try {
-      const res = await fetch("/api/health?refresh=1");
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as { ok: boolean; brain: BrainStatus };
-      onBrainUpdate(data.brain);
-      if (data.brain.online) {
-        const bits = [`modelo: ${data.brain.model ?? "desconocido"}`];
-        if (data.brain.latencyMs != null) bits.push(`${data.brain.latencyMs}ms`);
-        setTestResult({ ok: true, message: `Cerebro online · ${bits.join(" · ")}` });
-      } else if (!data.brain.configured) {
-        setTestResult({
-          ok: false,
-          message: "Sin URL configurada: se usará el cerebro local de respaldo.",
-        });
-      } else {
-        setTestResult({ ok: false, message: "El cerebro no responde en la URL configurada." });
+  // Sondea el cerebro con una URL concreta (vacía = la guardada) SIN persistir nada.
+  const probeBrain = useCallback(
+    async (url: string): Promise<TestResult | null> => {
+      setTesting(true);
+      setTestResult(null);
+      let result: TestResult | null = null;
+      try {
+        const qs = url ? `&url=${encodeURIComponent(url)}` : "";
+        const res = await fetch(`/api/health?refresh=1${qs}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = (await res.json()) as { ok: boolean; brain: BrainStatus };
+        onBrainUpdate(data.brain);
+        if (data.brain.online) {
+          const bits = [`modelo: ${data.brain.model ?? "desconocido"}`];
+          if (data.brain.latencyMs != null) bits.push(`${data.brain.latencyMs}ms`);
+          result = { ok: true, message: `Cerebro online · ${bits.join(" · ")}` };
+        } else if (url) {
+          result = {
+            ok: false,
+            message:
+              "Esa URL no responde. Verifica que el notebook siga en marcha (celdas 6-8) y que la URL sea exacta.",
+          };
+        } else if (!data.brain.configured) {
+          result = {
+            ok: false,
+            message: "Sin URL configurada: se usará el cerebro local de respaldo.",
+          };
+        } else {
+          result = { ok: false, message: "El cerebro no responde en la URL guardada." };
+        }
+      } catch {
+        result = { ok: false, message: "Error de red al contactar el servidor." };
+      } finally {
+        setTesting(false);
       }
-    } catch {
-      setTestResult({ ok: false, message: "Error de red al contactar el servidor." });
-    } finally {
-      setTesting(false);
-    }
-  }, [onBrainUpdate]);
+      setTestResult(result);
+      return result;
+    },
+    [onBrainUpdate]
+  );
 
-  // Ping del cerebro cada vez que se abren los ajustes.
+  // Botón «Probar conexión»: prueba la URL ESCRITA en el campo (aunque aún no esté guardada).
+  const testConnection = useCallback(async () => {
+    const result = await probeBrain(colabUrl.trim());
+    if (result?.ok && colabUrl.trim() && colabUrl.trim() !== (settings?.colabUrl ?? "")) {
+      setTestResult({ ...result, message: `${result.message} · pulsa «Guardar cambios» para fijarla` });
+    }
+  }, [colabUrl, settings, probeBrain]);
+
+  // Ping del cerebro guardado solo cuando el diálogo PASA de cerrado a abierto.
+  const wasOpen = useRef(false);
   useEffect(() => {
-    if (open) void testConnection();
-  }, [open, testConnection]);
+    if (open && !wasOpen.current) {
+      wasOpen.current = true;
+      if (settings) void probeBrain(settings.colabUrl ?? "");
+    }
+    if (!open) wasOpen.current = false;
+  }, [open, settings, probeBrain]);
 
   const handleSave = useCallback(async () => {
     if (!settings || saving) return;
@@ -225,11 +252,18 @@ export function SettingsDialog({
               <ol className="list-decimal space-y-1 pl-4">
                 <li>
                   Abre el notebook{" "}
-                  <span className="font-mono text-emerald-300">colab/myai_brain.ipynb</span> en Google
-                  Colab.
+                  <span className="font-mono text-emerald-300">colab/myai_brain.ipynb</span> (versión
+                  nueva, descargada de GitHub) en Google Colab.
                 </li>
-                <li>Ejecuta todas las celdas y espera a que el túnel se levante.</li>
-                <li>Copia la URL del túnel aquí y guarda los cambios.</li>
+                <li>
+                  Ejecuta todas las celdas: si{" "}
+                  <span className="font-mono text-emerald-300">PLATFORM_URL</span> está rellenada, el
+                  cerebro se registra SOLO al abrir el túnel.
+                </li>
+                <li>
+                  Registro manual: pega aquí la URL del túnel y pulsa «Guardar cambios» (el botón
+                  «Probar conexión» prueba la URL escrita, no la guardada).
+                </li>
               </ol>
             </div>
           </TabsContent>

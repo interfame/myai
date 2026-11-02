@@ -22,7 +22,36 @@ export function invalidateHealthCache() {
   cache = null;
 }
 
-export async function getHealthStatus(): Promise<HealthPayload> {
+export async function getHealthStatus(overrideUrl?: string | null): Promise<HealthPayload> {
+  // Sondeo directo de una URL concreta (p. ej. probar en Ajustes la URL escrita sin guardarla).
+  // No toca la cache ni persiste nada.
+  const candidate = overrideUrl?.trim().replace(/\/+$/, "") ?? "";
+  if (candidate) {
+    if (!/^https?:\/\//.test(candidate)) {
+      return {
+        ok: true,
+        brain: { configured: true, online: false, url: null, latencyMs: null, model: null },
+      };
+    }
+    let dbOk = true;
+    try {
+      await db.setting.count();
+    } catch {
+      dbOk = false;
+    }
+    const brain = await pingBrain(candidate);
+    return {
+      ok: dbOk,
+      brain: {
+        configured: true,
+        online: brain.online,
+        url: brain.online ? candidate : null,
+        latencyMs: brain.latencyMs,
+        model: brain.model,
+      },
+    };
+  }
+
   if (cache && Date.now() - cache.at < TTL_MS) return cache.payload;
 
   let dbOk = true;
