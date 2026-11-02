@@ -1,0 +1,60 @@
+// MyAI — Plataforma de IA libre con memoria evolutiva
+// Cerebro: Llama-3-8B-Uncensored en Google Colab | Memoria: SQLite (local) / Supabase (prod)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Ajustes globales del robot (singleton, id = "default")
+model Setting {
+  id           String   @id @default("default")
+  botName      String   @default("MyAI")
+  userName     String   @default("Jefe")
+  systemPrompt String   @default("")
+  autoLearn    Boolean  @default(true)
+  // Túnel del cerebro en Google Colab (cloudflared/ngrok)
+  colabUrl     String?
+  colabSecret  String?
+  updatedAt    DateTime @updatedAt
+}
+
+model Conversation {
+  id        String    @id @default(cuid())
+  title     String    @default("Nueva conversación")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  messages  Message[]
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  // role: "user" | "assistant" | "system"
+  role           String
+  content        String
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+// Aprendizajes que la IA extrae sola (bucle de retroalimentación)
+model Learning {
+  id               String   @id @default(cuid())
+  content          String
+  // preferencia | hecho | personalidad | habilidad | general
+  category         String   @default("general")
+  // auto (extraída por la IA) | manual (escrita por el Jefe)
+  source           String   @default("auto")
+  strength         Int      @default(1)
+  active           Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  lastReinforcedAt DateTime @default(now())
+
+  @@index([active, strength])
+}

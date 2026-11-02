@@ -1,0 +1,13 @@
+# MyAI en Netlify (también funciona en Vercel, Railway, VPS, etc.)
+# El backend de la plataforma = estas API routes de Next.js.
+
+[build]
+  command = "npm install && npm run build"
+  publish = ".next"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# Variables de entorno a configurar en Netlify UI:
+#   DATABASE_URL = postgresql://... (Supabase) o SQLite en /tmp (efímero)
+#   ⚠️ Netlify es serverless: para persistencia real usa Supabase como BD.
