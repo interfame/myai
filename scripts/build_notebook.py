@@ -16,7 +16,7 @@ md(r"""
 
 **El cerebro libre de tu plataforma MyAI.** Este notebook:
 
-1. ⚡ Carga **Llama-3-8B-Lexi-Uncensored** (GGUF Q4_K_M, ~5GB, con mirrors de respaldo) en la GPU T4 gratuita
+1. ⚡ Carga **Llama-3-8B-Lexi-Uncensored** (GGUF Q4_K_M, ~5GB, con mirrors de respaldo) en la GPU T4 gratuita, usando **Ollama** (CUDA incluido, cero errores de librerías)
 2. 🌐 Levanta un **servidor API** (FastAPI) con endpoints `/health` y `/chat` (streaming SSE)
 3. 🔗 Abre un **túnel público** con cloudflared (sin cuenta, sin tokens)
 4. 📡 **Se auto-registra** en tu plataforma MyAI → la web se conecta sola al cerebro
@@ -59,22 +59,43 @@ REGISTRATION_SECRET = "myai-super-secreto-2025"
 # ---------- Instalación ----------
 code(r"""
 # ═══════════════════════════════════════════════
-# CELDA 3 · Instalar dependencias (~2-4 min)
+# CELDA 3 · Instalar OLLAMA — el motor del cerebro (~1-2 min)
+# ¿Por qué Ollama? Trae SUS PROPIAS librerías CUDA incluidas → funciona en
+# cualquier versión de Colab sin errores de libcudart/compilación.
 # ═══════════════════════════════════════════════
-import sys, subprocess
+import os, time, subprocess, urllib.request
 
-def pip(*args):
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", *args], check=True)
+print("📦 Instalando dependencias ligeras (fastapi, uvicorn, huggingface_hub)...")
+subprocess.run("pip install -q fastapi uvicorn huggingface_hub requests", shell=True)
 
-print("📦 Instalando fastapi, uvicorn, huggingface_hub...")
-pip("fastapi", "uvicorn", "huggingface_hub", "requests")
+print("📦 Instalando Ollama (~1 GB, incluye CUDA)...")
+res = subprocess.run(
+    "curl -fsSL https://ollama.com/install.sh | sh > /content/ollama_install.log 2>&1",
+    shell=True,
+)
+if res.returncode != 0:
+    print(open("/content/ollama_install.log").read()[-1500:])
+    raise RuntimeError("❌ Falló la instalación de Ollama. Re-ejecuta esta celda.")
+print("   → Ollama instalado")
 
-print("📦 Instalando llama-cpp-python con CUDA (wheel precompilado, ~1-2 min)...")
-pip("llama-cpp-python",
-    "--extra-index-url", "https://abetlen.github.io/llama-cpp-python/whl/cu124",
-    "--no-cache-dir")
+print("🚀 Arrancando el servidor de Ollama en segundo plano...")
+env = dict(os.environ, OLLAMA_MODELS="/content/ollama_models")
+subprocess.Popen(
+    ["ollama", "serve"], env=env,
+    stdout=open("/content/ollama.log", "w"), stderr=subprocess.STDOUT,
+)
 
-print("✅ Instalación completa")
+for _ in range(30):
+    time.sleep(2)
+    try:
+        urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=3)
+        print("✅ Ollama activo en el puerto 11434 (detecta la T4 solo)")
+        break
+    except Exception:
+        pass
+else:
+    print(open("/content/ollama.log").read()[-1500:])
+    raise RuntimeError("❌ Ollama no arrancó. Re-ejecuta esta celda.")
 """)
 
 # ---------- Descarga del modelo ----------
@@ -110,31 +131,48 @@ if MODEL_PATH is None:
 # ---------- Carga del modelo ----------
 code(r"""
 # ═══════════════════════════════════════════════
-# CELDA 5 · Cargar el modelo en GPU (~1-2 min)
+# CELDA 5 · Registrar el modelo en Ollama + cargarlo en GPU (~1-2 min)
 # ═══════════════════════════════════════════════
-from llama_cpp import Llama
+import subprocess, requests
 
-print("🧠 Cargando Llama-3-8B-Uncensored en la GPU...")
-llm = Llama(
-    model_path=MODEL_PATH,
-    n_gpu_layers=-1,     # todas las capas a la GPU
-    n_ctx=8192,          # contexto: memoria de la conversación + aprendizajes
-    n_batch=512,
-    verbose=False,
-)
-print("✅ Cerebro listo y sin censura")
+with open("/content/Modelfile", "w") as f:
+    f.write(
+        f"FROM {MODEL_PATH}\n"
+        "PARAMETER num_ctx 8192\n"      # contexto: conversación + aprendizajes
+        "PARAMETER temperature 0.8\n"
+    )
+
+print("🧠 Registrando el modelo en Ollama como 'myai'...")
+subprocess.run(["ollama", "create", "myai", "-f", "/content/Modelfile"], check=True)
+print(subprocess.run(["ollama", "list"], capture_output=True, text=True).stdout)
+
+print("🔥 Calentando el cerebro (primera vez carga los pesos a la VRAM)...")
+requests.post("http://127.0.0.1:11434/api/chat", json={
+    "model": "myai",
+    "messages": [{"role": "user", "content": "Di: listo"}],
+    "stream": False,
+    "keep_alive": -1,
+    "options": {"num_predict": 5},
+}, timeout=300)
+
+print("✅ Cerebro cargado en GPU, sin censura y caliente")
 """)
 
 # ---------- Servidor ----------
 code(r"""
 # ═══════════════════════════════════════════════
-# CELDA 6 · Servidor API (FastAPI) — endpoints /health y /chat
+# CELDA 6 · Servidor API (FastAPI) — traduce Ollama al contrato de MyAI
+# Endpoints: /health y /chat (SSE con data: {"token": ...})
 # ═══════════════════════════════════════════════
 import json, time, threading
+import requests as httpx_requests
 import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+OLLAMA_URL = "http://127.0.0.1:11434"
+MODEL_NAME = "myai"
 
 app = FastAPI(title="MyAI Brain")
 
@@ -148,40 +186,56 @@ class ChatRequest(BaseModel):
     max_tokens: int = 1024
     temperature: float = 0.8
 
+def _ollama_payload(req: ChatRequest, stream: bool):
+    return {
+        "model": MODEL_NAME,
+        "messages": [{"role": m.role, "content": m.content} for m in req.messages],
+        "stream": stream,
+        "keep_alive": -1,   # el cerebro NUNCA se descarga de la VRAM
+        "options": {
+            "num_predict": req.max_tokens,
+            "temperature": req.temperature,
+            "num_ctx": 8192,
+        },
+    }
+
 @app.get("/health")
 def health():
+    try:
+        r = httpx_requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
+        ok = r.ok and any(m.get("name", "").startswith("myai") for m in r.json().get("models", []))
+        if not ok:
+            return {"status": "degraded", "model": None, "engine": "ollama"}
+    except Exception:
+        return {"status": "error", "model": None, "engine": "ollama"}
     return {
         "status": "ok",
-        "model": "Llama-3-8B-Lexi-Uncensored (Q4_K_M)",
-        "context": llm.n_ctx(),
-        "engine": "llama-cpp-python CUDA",
+        "model": "Llama-3-8B-Lexi-Uncensored (Q4_K_M · Ollama)",
+        "engine": "ollama CUDA",
     }
 
 @app.post("/chat")
 def chat(req: ChatRequest):
-    messages = [{"role": m.role, "content": m.content} for m in req.messages]
-
     if req.stream:
         def generate():
-            stream = llm.create_chat_completion(
-                messages=messages,
-                max_tokens=req.max_tokens,
-                temperature=req.temperature,
-                stream=True,
-            )
-            for chunk in stream:
-                token = chunk["choices"][0].get("delta", {}).get("content")
-                if token:
-                    yield f"data: {json.dumps({'token': token})}\n\n"
+            with httpx_requests.post(
+                f"{OLLAMA_URL}/api/chat", json=_ollama_payload(req, True),
+                stream=True, timeout=600,
+            ) as r:
+                for line in r.iter_lines():
+                    if not line:
+                        continue
+                    obj = json.loads(line)
+                    token = obj.get("message", {}).get("content", "")
+                    if token:
+                        yield f"data: {json.dumps({'token': token})}\n\n"
+                    if obj.get("done"):
+                        break
             yield "data: [DONE]\n\n"
         return StreamingResponse(generate(), media_type="text/event-stream")
 
-    out = llm.create_chat_completion(
-        messages=messages,
-        max_tokens=req.max_tokens,
-        temperature=req.temperature,
-    )
-    return {"content": out["choices"][0]["message"]["content"]}
+    r = httpx_requests.post(f"{OLLAMA_URL}/api/chat", json=_ollama_payload(req, False), timeout=600)
+    return {"content": r.json()["message"]["content"]}
 
 def run_server():
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="warning")

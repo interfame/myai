@@ -4,9 +4,7 @@ Tu propia IA personal con **Llama-3-8B-Uncensored** corriendo gratis en Google C
 memoria infinita evolutiva (aprende sola de cada conversación) y automatización total
 con GitHub Actions. **Costo de mantenimiento: $0.**
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/interfame/myai/blob/main/colab/myai_brain.ipynb) ![arquitectura](https://img.shields.io/badge/cerebro-Llama--3--8B--Uncensored-black) ![colab](https://img.shields.io/badge/Colab-T4%20GRATIS-emerald) ![license](https://img.shields.io/badge/uso-personal-green)
-
-> 🧠 **[CLIC AQUÍ PARA ABRIR EL CEREBRO EN GOOGLE COLAB](https://colab.research.google.com/github/interfame/myai/blob/main/colab/myai_brain.ipynb)** — sin descargas, sin instalación.
+![arquitectura](https://img.shields.io/badge/cerebro-Llama--3--8B--Uncensored-black) ![colab](https://img.shields.io/badge/Colab-T4%20GRATIS-emerald) ![license](https://img.shields.io/badge/uso-personal-green)
 
 ---
 
@@ -26,7 +24,7 @@ con GitHub Actions. **Costo de mantenimiento: $0.**
 │  CEREBRO (Google Colab T4)   │   │  MEMORIA                │
 │  colab/myai_brain.ipynb      │   │  · Conversaciones       │
 │  Llama-3-8B-Lexi-Uncensored  │   │  · Mensajes             │
-│  GGUF Q4_K_M · llama.cpp     │   │  · APRENDIZAJES (auto)  │
+│  GGUF Q4_K_M · Ollama     │   │  · APRENDIZAJES (auto)  │
 │  FastAPI + túnel cloudflared │   │  · Ajustes del robot    │
 └──────────────▲───────────────┘   └─────────────────────────┘
                │ auto-registro de túnel
@@ -64,9 +62,7 @@ npm run dev                 # → http://localhost:3000
 La plataforma ya funciona con un **cerebro de respaldo** integrado, incluso sin Colab.
 
 ### Paso 2 — El cerebro en Colab
-1. **Abre el notebook con este enlace directo (1 clic):**
-   👉 **[colab.research.google.com/github/interfame/myai/blob/main/colab/myai_brain.ipynb](https://colab.research.google.com/github/interfame/myai/blob/main/colab/myai_brain.ipynb)**
-   *(también puedes ir a [colab.research.google.com](https://colab.research.google.com) → Archivo → Abrir cuaderno → pestaña **GitHub** → escribe `interfame/myai` → selecciona `colab/myai_brain.ipynb`)*
+1. Sube (o abre desde el repo) `colab/myai_brain.ipynb` a [Google Colab](https://colab.research.google.com)
 2. `Entorno de ejecución → Cambiar tipo de entorno → T4 GPU`
 3. En la **Celda 2** rellena:
    - `PLATFORM_URL` → la URL pública de tu plataforma (ej: `https://myai.netlify.app`)
